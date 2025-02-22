@@ -1,0 +1,289 @@
+---
+title: "IDS_Project Group 4"
+output: html_document
+author: "Group 4: Vinay, Teera, Tharuni ,Sudhanshu 
+---
+```{r}
+# Packages̥
+library(arrow)
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(caret)
+library(e1071)
+library(lightgbm)
+library(data.table)
+
+print("All packages loaded")
+
+```
+
+```{r}
+# Importing Data
+house <- read_parquet("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/static_house_info.parquet")
+combined_data <- read_csv("combined_house_data.csv")
+energy_data <- combined_data
+# str(distinct(combined_data))
+
+# Merge energy_data with house data
+energy_data <- merge(x = energy_data, y = house, by.x = "building_id", by.y = "bldg_id")
+# View(energy_data)
+
+# Calculate total energy consumption
+energy_consumption <- rowSums(energy_data[, 3:44])
+
+# Create data frame with energy information
+eng <- data.frame(
+  energy_data[, 1:2],
+  energy_consumption,
+  energy_data[, 45:221]
+)
+
+# Display the structure of eng
+str(eng)
+
+```
+```{r}
+# Data Cleaning 
+
+eng[,"applicability"] <- as.factor(eng[,"applicability"])
+for (i in 1:ncol(eng)){
+  if(is.character(eng[,i])){
+    eng[,i] <- as.factor(eng[,i])
+  }
+}
+
+# Data Cleaning 
+
+# Convert 'applicability' column to factor
+eng[, "applicability"] <- as.factor(eng[, "applicability"])
+
+# Convert character columns to factor
+for (i in 1:ncol(eng)) {
+  if (is.character(eng[, i])) {
+    eng[, i] <- as.factor(eng[, i])
+  }
+}
+
+# Check and filter columns with more than one level
+x <- length(levels(eng[, 1])) != 1
+for (i in 2:ncol(eng)) {
+  if (is.factor(eng[, i])) {
+    x <- append(x, length(levels(eng[, i])) != 1)
+  } else {
+    x <- append(x, length(unique(eng[, i])) != 1)
+  }
+}
+
+cleandf <- eng[, x]
+
+# Apply asinh transformation to numeric columns
+for (i in 1:ncol(cleandf)) {
+  if (is.numeric(cleandf[, i])) {
+    cleandf[, i] <- asinh(cleandf[, i])
+  }
+}
+
+# View summary of energy_consumption column in cleandf
+summary(cleandf$energy_consumption)
+
+```
+```{r}
+# Exploratory Data Analysis and Visualization
+
+# Plot energy_consumption against Relative Humidity
+plot(cleandf$energy_consumption, cleandf$Relative.Humidity....)
+
+# Boxplot of energy_consumption grouped by in.cooling_setpoint
+boxplot(cleandf$energy_consumption ~ cleandf$in.cooling_setpoint)
+
+# Bar plot of energy_consumption by in.city using ggplot2
+ggplot(cleandf, aes(x = in.city, y = energy_consumption)) +
+  geom_bar(stat = "summary", fun = "sum", fill = "skyblue") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Feature Selection
+fit <- train(energy_consumption ~ ., data = cleandf, method = "lm")
+summary(fit)
+
+significant_features <- varImp(fit, scale = FALSE)
+sig <- significant_features$importance
+sig$features <- rownames(sig)
+sig <- sig[order(-sig$Overall),]
+
+# Write the significant features to a CSV file
+write.csv(sig, file = "significant_update.csv", row.names = FALSE)
+
+# Read the significant features from the CSV file
+ sig <- read_csv("C:/Users/tharu/Downloads/significant.csv")
+
+# View the significant features
+View(sig)
+
+
+```
+# modelling
+
+```{r}
+columnsdf <- c(
+  "in.heating_setpoint", "Dry.Bulb.Temperature...C.", "in.lighting",
+  "in.misc_pool", "in.misc_hot_tub_spa", "in.occupants",
+  "in.cooling_setpoint", "in.cooling_setpoint_offset_magnitude",
+  "in.misc_gas_fireplace", "in.window_areas", "in.income",
+  "in.misc_freezer", "Global.Horizontal.Radiation..W.m2.",
+  "in.misc_pool_heater", "in.sqft", "in.cooking_range", "Direct.Normal.Radiation..W.m2.",
+  "Wind.Speed..m.s.", "in.cooling_setpoint_offset_period", "in.geometry_foundation_type",
+  "in.misc_gas_grill", "in.misc_well_pump", "in.ducts", "in.roof_material",
+  "in.hot_water_fixtures", "in.misc_extra_refrigerator", "energy_consumption"
+)
+
+x <- cleandf[, columnsdf]
+
+```
+
+# train test split
+
+```{r}
+library(caret)
+set.seed(2701) 
+training <- createDataPartition(x$energy_consumption, p = 0.7, list = FALSE)
+train_data <- x[training, ]
+test_data <- x[-training, ]
+```
+
+# linear model
+
+```{r}
+# Train the linear regression model
+lm_model <- train(energy_consumption ~ ., data = x, method = "lm")
+
+# Summary of the linear regression model
+summary(lm_model)
+
+# Make predictions on the test data
+predictions <- predict(lm_model, test_data)
+test_actual <- test_data$energy_consumption
+
+# Calculate RMSE
+rmse <- sqrt(mean((predictions - test_actual)^2))
+print(paste("RMSE:", rmse))
+
+# Calculate R-squared
+r_squared <- 1 - (sum((test_actual - predictions)^2) / sum((test_actual - mean(test_actual))^2))
+print(paste("R-squared:", r_squared))
+
+```
+
+
+# Support Vector Regression Model
+
+```{r}
+
+# Fit SVM model
+svr_model <- svm(
+  energy_consumption ~ ., 
+  data = train_data,
+  type = "eps-regression", 
+  kernel = "radial"
+)
+
+# Summary of the SVM model
+summary(svr_model)
+
+# Predictions
+predictions <- predict(svr_model, test_data)
+test_actual <- test_data$energy_consumption
+
+# Calculate RMSE
+rmse <- sqrt(mean((predictions - test_actual)^2))
+print(paste("RMSE:", rmse))
+
+# Calculate R-squared
+residuals <- test_actual - predictions
+ss_res <- sum(residuals^2)
+ss_tot <- sum((test_actual - mean(test_actual))^2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared
+
+# Save the SVM model
+saveRDS(svr_model, file = "svr_model.rds")
+
+# Load the SVM model
+svr_model <- readRDS("svr_model.rds")
+```
+# LightGBM Model
+
+```{r}
+
+dtrain <- lgb.Dataset(data = as.matrix(x[, -ncol(x)]),
+                      label = x$energy_consumption)
+params <- list(
+  objective = "regression",
+  metric = "rmse",
+  num_leaves = 100,
+  learning_rate = 0.9,
+  n_estimators = 100
+)
+model <- lgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  valids = list(test = dtrain),
+  early_stopping_rounds = 30,
+  verbose = 1
+)
+```
+# Conclusion and Miscellaneous
+```{r}
+
+```
+# Visualizations
+```{r}
+# Visualization for distribution of energy consumption
+hist(eng$energy_consumption, breaks = 20, col = "skyblue", main = "Distribution of Energy Consumption", xlab = "Energy Consumption")
+```
+
+```{r}
+#correlation heatmap
+correlation_matrix <- cor(cleandf[, c("energy_consumption", "Relative.Humidity....", "Dry.Bulb.Temperature...C.", "Wind.Speed..m.s.")])
+corrplot(correlation_matrix, method = "color", type = "upper", order = "hclust", addCoef.col = "black")
+
+```
+
+```{r}
+# Time series plot of energy usage in July
+ggplot(cleandf, aes(x = time, y = energy_consumption)) +
+  geom_line(color = "green") +
+  labs(x = "Date", y = "Energy Usage", title = "Energy Usage in July")
+```
+
+```{r}
+# Boxplot of energy consumption by heating fuel type
+ggplot(cleandf, aes(x = in.heating_fuel, y = energy_consumption)) +
+  geom_boxplot(fill = "violet", color = "darkviolet") +
+  labs(x = "Heating Fuel Type", y = "Energy Consumption", title = "Energy Consumption by Heating Fuel Type")
+```
+
+```{r}
+# Bar plot of occupancy by city
+ggplot(cleandf, aes(x = in.city, fill = in.occupants)) +
+  geom_bar() +
+  labs(x = "City", y = "Frequency", title = "Occupancy by City")
+```
+
+```{r}
+#comparing both the models
+model_performance <- resamples(list(Linear = lm_model, SVM = svr_model, LightGBM = lgb_model))
+bwplot(model_performance, metric = "RMSE", layout = c(1, 3))
+
+
+# Actual vs. predicted plot
+plot(predictions, test_actual, xlab = "Predicted Energy Consumption", ylab = "Actual Energy Consumption", main = "Actual vs. Predicted Energy Consumption")
+
+# Residual plot
+residuals <- test_actual - predictions
+plot(predictions, residuals, xlab = "Predicted Energy Consumption", ylab = "Residuals", main = "Residual Plot")
+
+```
