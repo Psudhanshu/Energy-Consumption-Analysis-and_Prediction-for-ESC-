@@ -73,9 +73,6 @@ Support Vector Regression proved to be the most precise model for predicting ene
    python main.py
    ```
 
-## Contributors
-- Group 4 (Introduction to Data Science)
-
 ## License
 This project is licensed under the MIT License.
 
